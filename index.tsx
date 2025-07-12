@@ -83,6 +83,7 @@ async function sendHeartbeat(time: number) {
         type: 'app',
         project: settings.store.projectName,
         plugin: 'vencord/version discord-wakatime-proxy/v1.0.0',
+        category: "collaboration",
     });
 
     const headers: Record<string, string> = {
