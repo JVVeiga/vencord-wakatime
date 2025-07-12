@@ -2,15 +2,15 @@ import definePlugin, { OptionType } from '@utils/types';
 import { showNotification } from '@api/Notifications';
 import { definePluginSettings } from '@api/Settings';
 
+const MIN_INTERVAL_MS = 2 * 60 * 1000; // 2 minutos
+let lastHeartbeatAt = 0;
+
 const settings = definePluginSettings({
     apiKey: {
         type: OptionType.STRING,
         description: 'API Key for wakatime',
         default: '',
-        isValid: (e: string) => {
-            if (!e) return 'API Key is required';
-            return true;
-        },
+        isValid: (e: string) => (!e ? 'API Key is required' : true),
     },
     baseUrl: {
         type: OptionType.STRING,
@@ -43,19 +43,13 @@ const settings = definePluginSettings({
         type: OptionType.STRING,
         description: 'Machine name',
         default: 'Unknown',
-        isValid: (e: string) => {
-            if (!e) return 'Machine name is required';
-            return true;
-        },
+        isValid: (e: string) => (!e ? 'Machine name is required' : true),
     },
     projectName: {
         type: OptionType.STRING,
         description: 'Project Name',
         default: 'Discord',
-        isValid: (e: string) => {
-            if (!e) return 'Project name is required';
-            return true;
-        },
+        isValid: (e: string) => (!e ? 'Project name is required' : true),
     },
     debug: {
         type: OptionType.BOOLEAN,
@@ -64,12 +58,12 @@ const settings = definePluginSettings({
     },
 });
 
-async function sendHeartbeat(time) {
+async function sendHeartbeat(time: number) {
     const key = settings.store.apiKey;
     if (!key) {
         showNotification({
             title: 'WakaTime',
-            body: 'No api key for wakatime is setup.',
+            body: 'No API Key configured.',
             color: 'var(--red-360)',
         });
         return;
@@ -77,11 +71,10 @@ async function sendHeartbeat(time) {
 
     const baseUrl = settings.store.baseUrl;
     const proxyUrl = settings.store.proxyUrl;
-
     const requestUrl = proxyUrl || `${baseUrl}/users/current/heartbeats?api-key=${key}`;
+
     if (settings.store.debug) {
-        console.log(`Sending heartbeat to ${requestUrl}`);
-        console.log(`Time: ${time / 1000}, Entity: Discord, Type: app, Project: ${settings.store.projectName}, Plugin: vencord/version discord-wakatime/v0.0.1`);
+        console.log(`[WakaTime] Sending heartbeat to ${requestUrl}`);
     }
 
     const body = JSON.stringify({
@@ -92,30 +85,46 @@ async function sendHeartbeat(time) {
         plugin: 'vencord/version discord-wakatime-proxy/v1.0.0',
     });
 
-    const headers = {
+    const headers: Record<string, string> = {
         'Content-Type': 'application/json',
         'Content-Length': new TextEncoder().encode(body).length.toString(),
         'X-Machine-Name': settings.store.machineName,
     };
+
     if (proxyUrl) {
         headers['X-Proxy-Url'] = baseUrl;
         headers['API-Key'] = key;
     }
 
-    const response = await fetch(requestUrl, {
-        method: 'POST',
-        body: body,
-        headers: headers,
-    });
-    const data = await response.text();
-    if (response.status < 200 || response.status >= 300) {
-        console.error(`Error sending heartbeat: ${response.status} - ${data}`);
+    try {
+        const res = await fetch(requestUrl, {
+            method: 'POST',
+            body,
+            headers,
+        });
+        const data = await res.text();
+        if (res.status < 200 || res.status >= 300) {
+            console.error(`[WakaTime] Failed (${res.status}): ${data}`);
+        }
+    } catch (err) {
+        console.error(`[WakaTime] Error:`, err);
+    }
+}
+
+function shouldSendHeartbeat(): boolean {
+    return Date.now() - lastHeartbeatAt > MIN_INTERVAL_MS;
+}
+
+function handleActivity() {
+    if (shouldSendHeartbeat()) {
+        lastHeartbeatAt = Date.now();
+        sendHeartbeat(lastHeartbeatAt);
     }
 }
 
 export default definePlugin({
     name: 'wakatime-proxy',
-    description: 'Wakatime plugin with proxy support',
+    description: 'WakaTime plugin with proxy and smart heartbeat',
     authors: [
         {
             id: 846372672421101568n,
@@ -124,15 +133,21 @@ export default definePlugin({
     ],
     settings,
     start() {
-        const minutesInMilliseconds = 120000; // 2 minutes
-        this.updateInterval = setInterval(async () => {
-            const time = Date.now();
-            await sendHeartbeat(time);
-        }, minutesInMilliseconds);
-        console.log('Initializing WakaTime');
+        lastHeartbeatAt = 0;
+        document.addEventListener('mousemove', handleActivity);
+        document.addEventListener('keydown', handleActivity);
+        document.addEventListener('click', handleActivity);
+
+        if (settings.store.debug) {
+            console.log('[WakaTime] Plugin started');
+        }
     },
     stop() {
-        clearInterval(this.updateInterval);
-        console.log('Unloading WakaTime');
+        document.removeEventListener('mousemove', handleActivity);
+        document.removeEventListener('keydown', handleActivity);
+        document.removeEventListener('click', handleActivity);
+        if (settings.store.debug) {
+            console.log('[WakaTime] Plugin stopped');
+        }
     },
 });
